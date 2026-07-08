@@ -4,6 +4,7 @@ let currentReportId = null;
 let currentReportData = null;
 let queueFilterEnabled = false;
 let readyFilterEnabled = false;
+let currentCityFilter = '';
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -14,6 +15,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Form submission
   document.getElementById('report-form').addEventListener('submit', createReport);
+
+  const cityFilterInput = document.getElementById('city-filter');
+  if (cityFilterInput) {
+    cityFilterInput.addEventListener('input', () => {
+      currentCityFilter = cityFilterInput.value.trim();
+      updateBulkButtonLabel();
+      loadReports();
+    });
+  }
+
+  updateBulkButtonLabel();
 
   // Load reports on startup
   loadReports();
@@ -52,6 +64,11 @@ async function loadReports() {
     }
 
     let filteredReports = reports;
+    if (currentCityFilter) {
+      filteredReports = filteredReports.filter(report =>
+        (report.address || '').toLowerCase().includes(currentCityFilter.toLowerCase())
+      );
+    }
     if (queueFilterEnabled) {
       filteredReports = filteredReports.filter(report => report.hasEngineerReport && report.eligibilityCheckDone);
     }
@@ -71,7 +88,12 @@ async function loadReports() {
 
     container.innerHTML = filteredReports.map(report => `
       <div class="report-card" onclick="showDetails('${report.id}')">
-        <h3>${report.damageType}</h3>
+        <div class="report-card-header">
+          <h3>${report.damageType}</h3>
+          ${report.generatedPackageUrl ? `
+            <a class="document-link" href="${report.generatedPackageUrl}" target="_blank" rel="noopener noreferrer" title="פתח תיק חזרה לבית" onclick="event.stopPropagation()">📄</a>
+          ` : ''}
+        </div>
         <p><strong>Reporter:</strong> ${report.reporterName}</p>
         <p><strong>Address:</strong> ${report.address}</p>
         <p><strong>Description:</strong> ${report.description.substring(0, 100)}...</p>
@@ -88,6 +110,17 @@ async function loadReports() {
     document.getElementById('reports-container').innerHTML = 
       '<p style="color: red;">Error loading reports. Please try again.</p>';
   }
+}
+
+function updateBulkButtonLabel() {
+  const button = document.getElementById('bulk-package-btn');
+  if (!button) {
+    return;
+  }
+
+  button.textContent = currentCityFilter
+    ? 'הפק תיקי אכלוס לכל היישוב'
+    : 'הפק תיקי אכלוס לכל המבנים הזכאים';
 }
 
 function toggleQueueFilter() {
@@ -322,6 +355,15 @@ function updateBudgetRequestButton(report) {
 
 function showPackageLink(url) {
   const container = document.getElementById('package-link-container');
+  if (!container) {
+    return;
+  }
+
+  if (!url) {
+    container.innerHTML = '';
+    return;
+  }
+
   container.innerHTML = `
     <div class="package-link-message">
       <a href="${url}" target="_blank" rel="noopener noreferrer">צפה/הורד את תיק האכלוס מחדש</a>
@@ -329,7 +371,73 @@ function showPackageLink(url) {
   `;
 }
 
+function showActivityMessage(message, type = 'info') {
+  const container = document.getElementById('activity-message');
+  if (!container) {
+    return;
+  }
+
+  container.textContent = message;
+  container.className = `activity-message ${type}`;
+}
+
+function showBulkMessage(message, isError = false) {
+  const container = document.getElementById('bulk-message');
+  if (!container) {
+    return;
+  }
+
+  container.textContent = message;
+  container.className = isError ? 'bulk-message error' : 'bulk-message success';
+}
+
+function showLoadingModal() {
+  const modal = document.getElementById('loading-modal');
+  if (modal) {
+    modal.classList.add('open');
+  }
+}
+
+function hideLoadingModal() {
+  const modal = document.getElementById('loading-modal');
+  if (modal) {
+    modal.classList.remove('open');
+  }
+}
+
+async function bulkGenerateReturnHomePackages() {
+  try {
+    showLoadingModal();
+    showBulkMessage('');
+
+    const response = await fetch(`${SERVICE_URL}/buildings/bulk/return-home-packages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ city: currentCityFilter })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to generate documents');
+    }
+
+    const data = await response.json();
+    await loadReports();
+    hideLoadingModal();
+    showBulkMessage(`הופקו ${data.generatedCount} תיקי חזרה לבית`);
+  } catch (error) {
+    hideLoadingModal();
+    console.error('Error generating bulk return home packages:', error);
+    showBulkMessage(error.message, true);
+  }
+}
+
 async function generateReturnHomePackage(reportId) {
+  showActivityMessage('מפיק תיקי אכלוס...', 'info');
+  showPackageLink('');
+
   try {
     const response = await fetch(`${SERVICE_URL}/buildings/${reportId}/return-home-package`, {
       method: 'POST',
@@ -341,10 +449,12 @@ async function generateReturnHomePackage(reportId) {
     }
 
     const data = await response.json();
+    await loadReports();
     showPackageLink(data.url);
+    showActivityMessage('הפקת תיקי האכלוס הסתיימה בהצלחה', 'success');
   } catch (error) {
     console.error('Error generating return home package:', error);
-    alert(error.message);
+    showActivityMessage(error.message, 'error');
   }
 }
 

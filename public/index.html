@@ -22,9 +22,13 @@
       <h2>All Reports</h2>
       <div class="actions-row">
         <button class="refresh-btn" onclick="loadReports()">Refresh</button>
+        <input id="city-filter" class="city-filter" type="text" placeholder="סנן לפי ישוב" />
+        <button id="bulk-package-btn" class="bulk-btn" onclick="bulkGenerateReturnHomePackages()">הפק תיקי אכלוס לכל המבנים הזכאים</button>
         <button id="queue-filter-btn" class="filter-btn" onclick="toggleQueueFilter()">הצג רק בתור לעבודה</button>
         <button id="ready-filter-btn" class="filter-btn" onclick="toggleReadyFilter()">הצג רק מוכן לשחרור תקציב</button>
       </div>
+      <div id="bulk-message" class="bulk-message"></div>
+      <div id="activity-message" class="activity-message"></div>
       <div id="package-link-container" class="package-link-container"></div>
       <div id="reports-container" class="reports-grid">
         <p>Loading reports...</p>
@@ -120,6 +124,14 @@
         </div>
         <button onclick="closeDetailsModal()" class="close-btn">Close</button>
       </div>
+    </div>
+  </div>
+
+  <div id="loading-modal" class="modal loading-modal">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <h3>מפיק תיקים...</h3>
+      <p>המערכת מעבדת את המבנים הנבחרים ומייצרת את התיקים.</p>
     </div>
   </div>
 

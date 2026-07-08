@@ -14,43 +14,47 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // In-memory storage
-let reports = [
-  {
+function createSampleReport(index, overrides = {}) {
+  const isEligible = index <= 10;
+
+  return {
     id: uuidv4(),
-    reporterName: 'John Doe',
-    address: '123 Main St, Springfield',
-    damageType: 'Water Damage',
-    description: 'Roof leak during heavy rain',
+    reporterName: `מבנה ${String(index).padStart(2, '0')}`,
+    address: `ירושלים, רחוב ${index + 10}`,
+    damageType: index % 3 === 0 ? 'Water Damage' : 'Structural Damage',
+    description: `דוגמה למבנה ${index} באזור ירושלים`,
     hasDamageImages: true,
-    hasEngineerReport: true,
-    eligibilityCheckDone: true,
-    apartmentsCount: 8,
+    hasEngineerReport: isEligible,
+    eligibilityCheckDone: isEligible,
+    apartmentsCount: 4 + (index % 6),
     socialApproval: false,
-    budgetRequestOpened: true,
-    status: 'NEW'
-  },
-  {
-    id: uuidv4(),
-    reporterName: 'Jane Smith',
-    address: '456 Oak Ave, Shelbyville',
-    damageType: 'Fire Damage',
-    description: 'Kitchen fire - extinguished',
-    hasDamageImages: false,
-    hasEngineerReport: false,
-    eligibilityCheckDone: false,
-    apartmentsCount: 3,
-    socialApproval: false,
-    budgetRequestOpened: false,
-    status: 'IN_REVIEW'
-  }
-];
+    budgetRequestOpened: isEligible,
+    status: isEligible ? 'REHABILITATION_COMPLETED' : 'IN_REVIEW',
+    ...overrides,
+  };
+}
+
+let reports = Array.from({ length: 20 }, (_, index) => createSampleReport(index + 1));
+
+function enrichReports(sourceReports) {
+  return sourceReports
+    .map(rehabilitationService.attachPolicyFlags)
+    .map(occupancyPackageService.attachPackagePolicyFlags);
+}
+
+function getReportsForView(cityFilter = '') {
+  const normalizedFilter = cityFilter.trim().toLowerCase();
+  const filteredReports = normalizedFilter
+    ? reports.filter(report => (report.address || '').toLowerCase().includes(normalizedFilter))
+    : reports;
+
+  return enrichReports(filteredReports);
+}
 
 // GET /reports - Get all reports
 app.get('/api/reports', (req, res) => {
-  const enrichedReports = reports
-    .map(rehabilitationService.attachPolicyFlags)
-    .map(occupancyPackageService.attachPackagePolicyFlags);
-  res.json(enrichedReports);
+  const cityFilter = req.query.city || '';
+  res.json(getReportsForView(cityFilter));
 });
 
 // POST /reports - Create a new report
@@ -138,11 +142,41 @@ app.post('/buildings/:id/return-home-package', async (req, res) => {
 
   try {
     const pdfResult = await occupancyPackageService.generateReturnHomePackage(report);
-    res.json({ url: pdfResult.url });
+    report.generatedPackageUrl = pdfResult.url;
+    report.generatedPackageFileName = pdfResult.fileName;
+    res.json({ url: pdfResult.url, fileName: pdfResult.fileName, reportId: report.id });
   } catch (error) {
     console.error('Failed to generate return home package:', error);
     res.status(500).json({ error: 'Failed to generate PDF document' });
   }
+});
+
+// POST /buildings/bulk/return-home-packages - Generate occupancy packages for eligible buildings
+app.post('/buildings/bulk/return-home-packages', async (req, res) => {
+  const cityFilter = (req.body?.city || '').trim().toLowerCase();
+  const targetedReports = cityFilter
+    ? reports.filter(report => (report.address || '').toLowerCase().includes(cityFilter))
+    : reports;
+
+  const generatedReports = [];
+
+  for (const report of targetedReports) {
+    const packagePolicy = occupancyPackageService.canGenerateReturnHomePackage(report);
+    if (!packagePolicy.isAllowed) {
+      continue;
+    }
+
+    try {
+      const pdfResult = await occupancyPackageService.generateReturnHomePackage(report);
+      report.generatedPackageUrl = pdfResult.url;
+      report.generatedPackageFileName = pdfResult.fileName;
+      generatedReports.push({ id: report.id, url: pdfResult.url });
+    } catch (error) {
+      console.error(`Failed to generate return home package for ${report.id}:`, error);
+    }
+  }
+
+  res.json({ generatedCount: generatedReports.length, reports: generatedReports });
 });
 
 // PATCH /reports/:id/status - Change report status
