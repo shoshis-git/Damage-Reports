@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Damage Reports System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Damage Reports Management System</h1>
+    </header>
+
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="reports-list">Reports List</button>
+      <button class="tab-btn" data-tab="create-report">Create Report</button>
+    </nav>
+
+    <!-- Reports List Tab -->
+    <div id="reports-list" class="tab-content active">
+      <h2>All Reports</h2>
+      <div class="actions-row">
+        <button class="refresh-btn" onclick="loadReports()">Refresh</button>
+        <button id="queue-filter-btn" class="filter-btn" onclick="toggleQueueFilter()">הצג רק בתור לעבודה</button>
+        <button id="ready-filter-btn" class="filter-btn" onclick="toggleReadyFilter()">הצג רק מוכן לשחרור תקציב</button>
+      </div>
+      <div id="package-link-container" class="package-link-container"></div>
+      <div id="reports-container" class="reports-grid">
+        <p>Loading reports...</p>
+      </div>
+    </div>
+
+    <!-- Create Report Tab -->
+    <div id="create-report" class="tab-content">
+      <h2>Create New Report</h2>
+      <form id="report-form" class="form">
+        <div class="form-group">
+          <label for="reporterName">Reporter Name:</label>
+          <input type="text" id="reporterName" required placeholder="Enter reporter name">
+        </div>
+
+        <div class="form-group">
+          <label for="address">Address:</label>
+          <input type="text" id="address" required placeholder="Enter address">
+        </div>
+
+        <div class="form-group">
+          <label for="damageType">Damage Type:</label>
+          <select id="damageType" required>
+            <option value="">Select damage type</option>
+            <option value="Water Damage">Water Damage</option>
+            <option value="Fire Damage">Fire Damage</option>
+            <option value="Wind Damage">Wind Damage</option>
+            <option value="Structural Damage">Structural Damage</option>
+            <option value="Electrical Damage">Electrical Damage</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="description">Description:</label>
+          <textarea id="description" required placeholder="Describe the damage" rows="5"></textarea>
+        </div>
+
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="hasDamageImages">
+            קיימות תמונות נזק
+          </label>
+        </div>
+
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="hasEngineerReport">
+            קיים דו"ח מהנדס
+          </label>
+        </div>
+
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="eligibilityCheckDone">
+            בוצעה בדיקת זכאות
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label for="apartmentsCount">מספר דירות במבנה:</label>
+          <input type="number" id="apartmentsCount" required min="1" placeholder="Enter number of apartments">
+        </div>
+
+        <button type="submit" class="submit-btn">Create Report</button>
+        <div id="form-message" class="message"></div>
+      </form>
+    </div>
+
+    <!-- Report Details Modal -->
+    <div id="details-modal" class="modal">
+      <div class="modal-content">
+        <span class="close" onclick="closeDetailsModal()">&times;</span>
+        <h2>Report Details</h2>
+        <div id="report-details-content"></div>
+        <div id="rehab-status" class="rehab-status"></div>
+
+        <div id="budget-section" class="budget-section">
+          <button id="open-budget-btn" class="save-btn" onclick="openBudgetRequest()">פתח בקשת תקציב</button>
+          <div id="budget-message" class="budget-message"></div>
+        </div>
+
+        <div id="status-section" class="status-section">
+          <label for="status-select">Change Status:</label>
+          <select id="status-select">
+            <option value="WAITING_FOR_VALIDATION">WAITING_FOR_VALIDATION</option>
+            <option value="NEW">NEW</option>
+            <option value="IN_REVIEW">IN_REVIEW</option>
+            <option value="IN_REHABILITATION">IN_REHABILITATION</option>
+            <option value="REHABILITATION_COMPLETED">REHABILITATION_COMPLETED</option>
+          </select>
+          <button onclick="updateStatus()" class="save-btn">Save Status</button>
+        </div>
+        <button onclick="closeDetailsModal()" class="close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
