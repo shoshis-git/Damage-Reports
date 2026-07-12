@@ -2,11 +2,74 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const http = require('http');
 const rehabilitationService = require('./services/rehabilitationService');
 const occupancyPackageService = require('./services/occupancyPackageService');
+const notificationService = require('./services/notificationService');
+
+function httpPostJson(url, payload) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const data = JSON.stringify(payload);
+
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    };
+
+    const req = http.request(options, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          }
+          resolve(parsed);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+async function sendNotificationUsingApi(payload) {
+  const url = `http://localhost:${PORT}/notifications/send`;
+  if (typeof fetch === 'function') {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Notification API failed');
+    }
+
+    return response.json();
+  }
+
+  return httpPostJson(url, payload);
+}
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -27,6 +90,7 @@ function createSampleReport(index, overrides = {}) {
     hasEngineerReport: isEligible,
     eligibilityCheckDone: isEligible,
     apartmentsCount: 4 + (index % 6),
+    familyEmail: `family${index}@example.com`,
     socialApproval: false,
     budgetRequestOpened: isEligible,
     status: isEligible ? 'REHABILITATION_COMPLETED' : 'IN_REVIEW',
@@ -59,7 +123,7 @@ app.get('/api/reports', (req, res) => {
 
 // POST /reports - Create a new report
 app.post('/api/reports', (req, res) => {
-  const { reporterName, address, damageType, description, hasDamageImages, hasEngineerReport, eligibilityCheckDone, apartmentsCount } = req.body;
+  const { reporterName, address, damageType, description, hasDamageImages, hasEngineerReport, eligibilityCheckDone, apartmentsCount, familyEmail } = req.body;
 
   // Validation
   if (
@@ -71,7 +135,10 @@ app.post('/api/reports', (req, res) => {
     typeof hasEngineerReport !== 'boolean' ||
     typeof eligibilityCheckDone !== 'boolean' ||
     !Number.isInteger(apartmentsCount) ||
-    apartmentsCount < 1
+    apartmentsCount < 1 ||
+    !familyEmail ||
+    typeof familyEmail !== 'string' ||
+    !familyEmail.includes('@')
   ) {
     return res.status(400).json({ error: 'All fields are required and must be valid' });
   }
@@ -86,6 +153,7 @@ app.post('/api/reports', (req, res) => {
     hasEngineerReport,
     eligibilityCheckDone,
     apartmentsCount,
+    familyEmail,
     socialApproval: false,
     budgetRequestOpened: false,
     status: 'WAITING_FOR_VALIDATION'
@@ -144,11 +212,78 @@ app.post('/buildings/:id/return-home-package', async (req, res) => {
     const pdfResult = await occupancyPackageService.generateReturnHomePackage(report);
     report.generatedPackageUrl = pdfResult.url;
     report.generatedPackageFileName = pdfResult.fileName;
-    res.json({ url: pdfResult.url, fileName: pdfResult.fileName, reportId: report.id });
+
+    const notificationPayload = {
+      buildingId: report.id,
+      idempotencyKey: report.id,
+      email: report.familyEmail,
+      subject: `אישור חזרה לבית ${report.address}`,
+      body: `שלום,\n\nאנו שמחים לעדכן כי המבנה שלכם אושר לחזרה לבית.\nתיק האכלוס הוכן בהצלחה.\n\nבברכה,\nמשרד הבינוי והשיכון`,
+    };
+
+    const notificationResult = await sendNotificationUsingApi(notificationPayload);
+
+    res.json({
+      url: pdfResult.url,
+      fileName: pdfResult.fileName,
+      reportId: report.id,
+      messageId: notificationResult.messageId,
+      notificationStatus: notificationResult.status,
+    });
   } catch (error) {
-    console.error('Failed to generate return home package:', error);
-    res.status(500).json({ error: 'Failed to generate PDF document' });
+    console.error('Failed to generate return home package or notify:', error);
+    res.status(500).json({ error: 'Failed to generate PDF document or send notification' });
   }
+});
+
+// POST /notifications/send - Mock notification send API
+app.post('/notifications/send', async (req, res) => {
+  const { buildingId, email, subject, body, idempotencyKey } = req.body;
+  if (!buildingId || !email || !subject || !body || !idempotencyKey) {
+    return res.status(400).json({ error: 'buildingId, email, subject, body and idempotencyKey are required' });
+  }
+
+  if (notificationService.hasSuccessfullySentNotification(idempotencyKey)) {
+    return res.json({ status: 'ALREADY_SENT' });
+  }
+
+  const report = reports.find(r => r.id === buildingId);
+  const address = report ? report.address : null;
+
+  let result;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    result = await notificationService.sendNotification({ buildingId, email, subject, body, address, idempotencyKey });
+    if (result.status === 'SENT') {
+      break;
+    }
+  }
+
+  res.json(result);
+});
+
+// GET /notifications/state - Get current mock notification server state
+app.get('/notifications/state', (req, res) => {
+  res.json({ mode: notificationService.getNotificationMode() });
+});
+
+// POST /notifications/state - Set current mock notification server state
+app.post('/notifications/state', (req, res) => {
+  const { mode } = req.body;
+  if (!mode) {
+    return res.status(400).json({ error: 'mode is required' });
+  }
+
+  try {
+    notificationService.setNotificationMode(mode);
+    res.json({ mode: notificationService.getNotificationMode() });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// GET /api/notifications - Get all sent notifications
+app.get('/api/notifications', (req, res) => {
+  res.json(notificationService.getNotifications());
 });
 
 // POST /buildings/bulk/return-home-packages - Generate occupancy packages for eligible buildings

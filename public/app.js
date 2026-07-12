@@ -25,6 +25,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const notificationModeSelect = document.getElementById('notification-mode-select');
+  if (notificationModeSelect) {
+    notificationModeSelect.addEventListener('change', () => {
+      setNotificationServerState(notificationModeSelect.value);
+    });
+  }
+
   updateBulkButtonLabel();
 
   // Load reports on startup
@@ -32,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Switch tabs
-function switchTab(e) {
+async function switchTab(e) {
   const tabName = e.target.getAttribute('data-tab');
   
   // Hide all tabs
@@ -48,6 +55,11 @@ function switchTab(e) {
   // Show selected tab
   document.getElementById(tabName).classList.add('active');
   e.target.classList.add('active');
+
+  if (tabName === 'message-center') {
+    await loadNotificationServerState();
+    loadNotifications();
+  }
 }
 
 // Load all reports
@@ -94,6 +106,7 @@ async function loadReports() {
             <a class="document-link" href="${report.generatedPackageUrl}" target="_blank" rel="noopener noreferrer" title="פתח תיק חזרה לבית" onclick="event.stopPropagation()">📄</a>
           ` : ''}
         </div>
+        <p><strong>Email:</strong> ${report.familyEmail}</p>
         <p><strong>Reporter:</strong> ${report.reporterName}</p>
         <p><strong>Address:</strong> ${report.address}</p>
         <p><strong>Description:</strong> ${report.description.substring(0, 100)}...</p>
@@ -137,6 +150,13 @@ function toggleReadyFilter() {
   loadReports();
 }
 
+function openMessageCenter() {
+  const tabBtn = document.querySelector('[data-tab="message-center"]');
+  if (tabBtn) {
+    switchTab({ target: tabBtn });
+  }
+}
+
 // Create new report
 async function createReport(e) {
   e.preventDefault();
@@ -148,6 +168,7 @@ async function createReport(e) {
   const hasDamageImages = document.getElementById('hasDamageImages').checked;
   const hasEngineerReport = document.getElementById('hasEngineerReport').checked;
   const eligibilityCheckDone = document.getElementById('eligibilityCheckDone').checked;
+  const familyEmail = document.getElementById('familyEmail').value;
   const apartmentsCount = parseInt(document.getElementById('apartmentsCount').value, 10);
 
   try {
@@ -164,6 +185,7 @@ async function createReport(e) {
         hasDamageImages,
         hasEngineerReport,
         eligibilityCheckDone,
+        familyEmail,
         apartmentsCount
       })
     });
@@ -221,6 +243,10 @@ async function showDetails(reportId) {
       <div class="detail-row">
         <div class="detail-label">Address</div>
         <div class="detail-value">${report.address}</div>
+      </div>
+      <div class="detail-row">
+        <div class="detail-label">Family Email</div>
+        <div class="detail-value">${report.familyEmail || '---'}</div>
       </div>
       <div class="detail-row">
         <div class="detail-label">Damage Type</div>
@@ -526,3 +552,109 @@ window.addEventListener('click', (event) => {
     closeDetailsModal();
   }
 });
+
+async function loadNotificationServerState() {
+  try {
+    const response = await fetch(`${SERVICE_URL}/notifications/state`);
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    const select = document.getElementById('notification-mode-select');
+    if (select) {
+      select.value = data.mode;
+    }
+
+    const status = document.getElementById('notification-server-status');
+    if (status) {
+      status.textContent = data.mode;
+    }
+  } catch (error) {
+    console.error('Error loading notification server state:', error);
+  }
+}
+
+async function setNotificationServerState(mode) {
+  try {
+    const response = await fetch(`${SERVICE_URL}/notifications/state`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Failed to update notification server state');
+    }
+
+    const data = await response.json();
+    const status = document.getElementById('notification-server-status');
+    if (status) {
+      status.textContent = data.mode;
+    }
+    loadNotifications();
+  } catch (error) {
+    console.error('Error updating notification server state:', error);
+    alert('Failed to update notification server state. Please try again.');
+  }
+}
+
+async function loadNotifications() {
+  try {
+    const response = await fetch(`${API_URL}/notifications`);
+    const notifications = await response.json();
+    renderNotifications(notifications);
+  } catch (error) {
+    console.error('Error loading notifications:', error);
+    const container = document.getElementById('notifications-container');
+    if (container) {
+      container.innerHTML = '<p style="color: red;">Error loading notifications.</p>';
+    }
+  }
+}
+
+function renderNotifications(notifications) {
+  const container = document.getElementById('notifications-container');
+  if (!container) {
+    return;
+  }
+
+  if (!notifications || notifications.length === 0) {
+    container.innerHTML = '<p>No notifications have been sent yet.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="notifications-table">
+      <thead>
+        <tr>
+          <th>Message ID</th>
+          <th>Building ID</th>
+          <th>Idempotency Key</th>
+          <th>כתובת המבנה</th>
+          <th>כתובת המייל</th>
+          <th>Subject</th>
+          <th>Date & Time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${notifications.map(notification => `
+          <tr>
+            <td>${notification.messageId}</td>
+            <td>${notification.buildingId}</td>
+            <td>${notification.idempotencyKey}</td>
+            <td>${notification.address || '---'}</td>
+            <td>${notification.email}</td>
+            <td>${notification.subject}</td>
+                <td>${notification.sentAt}</td>
+                <td><span class="notification-status notification-status-${notification.status}">${notification.status}</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
