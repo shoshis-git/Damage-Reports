@@ -14,7 +14,10 @@
 
     <nav class="nav-tabs">
       <button class="tab-btn active" data-tab="reports-list">Reports List</button>
+      <button class="tab-btn" data-tab="assessor-portal">פורטל שמאים</button>
+      <button class="tab-btn" data-tab="local-authority-portal">פורטל רשויות מקומיות</button>
       <button class="tab-btn" data-tab="create-report">Create Report</button>
+      <button class="tab-btn" data-tab="message-center">מרכז הודעות</button>
     </nav>
 
     <!-- Reports List Tab -->
@@ -22,6 +25,7 @@
       <h2>All Reports</h2>
       <div class="actions-row">
         <button class="refresh-btn" onclick="loadReports()">Refresh</button>
+        <button class="navigate-btn" onclick="openMessageCenter()">מרכז הודעות</button>
         <input id="city-filter" class="city-filter" type="text" placeholder="סנן לפי ישוב" />
         <button id="bulk-package-btn" class="bulk-btn" onclick="bulkGenerateReturnHomePackages()">הפק תיקי אכלוס לכל המבנים הזכאים</button>
         <button id="queue-filter-btn" class="filter-btn" onclick="toggleQueueFilter()">הצג רק בתור לעבודה</button>
@@ -30,9 +34,28 @@
       <div id="bulk-message" class="bulk-message"></div>
       <div id="activity-message" class="activity-message"></div>
       <div id="package-link-container" class="package-link-container"></div>
+      <div id="settlement-summary" class="settlement-summary" hidden></div>
       <div id="reports-container" class="reports-grid">
         <p>Loading reports...</p>
       </div>
+    </div>
+
+    <!-- Assessor Portal Tab -->
+    <div id="assessor-portal" class="tab-content">
+      <h2>פורטל שמאים</h2>
+      <p class="portal-intro">בחר מבנה מהמערכת והזן עבורו הערכת נזק מקצועית.</p>
+      <div id="assessor-portal-message" class="assessor-message"></div>
+      <div id="assessor-portal-list" class="assessor-portal-grid"></div>
+      <div id="assessor-portal-form" class="assessor-form-panel"></div>
+    </div>
+
+    <!-- Local Authority Portal Tab -->
+    <div id="local-authority-portal" class="tab-content">
+      <h2>פורטל רשויות מקומיות</h2>
+      <p class="portal-intro">בחר מבנה מהמערכת ועדכן את מצב התשתיות והסביבה לפני אישור החזרה למגורים.</p>
+      <div id="local-authority-portal-message" class="assessor-message"></div>
+      <div id="local-authority-portal-list" class="assessor-portal-grid"></div>
+      <div id="local-authority-portal-form" class="assessor-form-panel"></div>
     </div>
 
     <!-- Create Report Tab -->
@@ -89,6 +112,11 @@
         </div>
 
         <div class="form-group">
+          <label for="familyEmail">Family Email:</label>
+          <input type="email" id="familyEmail" required placeholder="family@example.com">
+        </div>
+
+        <div class="form-group">
           <label for="apartmentsCount">מספר דירות במבנה:</label>
           <input type="number" id="apartmentsCount" required min="1" placeholder="Enter number of apartments">
         </div>
@@ -123,6 +151,34 @@
           <button onclick="updateStatus()" class="save-btn">Save Status</button>
         </div>
         <button onclick="closeDetailsModal()" class="close-btn">Close</button>
+      </div>
+    </div>
+
+    <div id="assessor-modal" class="modal">
+      <div class="modal-content assessor-modal-content">
+        <span class="close" onclick="closeAssessorModal()">&times;</span>
+        <h2>הערכת שמאי</h2>
+        <div id="assessor-modal-content"></div>
+      </div>
+    </div>
+
+    <div id="message-center" class="tab-content">
+      <h2>מרכז הודעות</h2>
+      <div class="notification-state-panel">
+        <label for="notification-mode-select">מצב שרת ההודעות:</label>
+        <select id="notification-mode-select">
+          <option value="Success">Success</option>
+          <option value="Always Fail">Always Fail</option>
+          <option value="Fail First Attempt">Fail First Attempt</option>
+          <option value="Random Failure">Random Failure</option>
+          <option value="Response Lost (Timeout)">Response Lost (Timeout)</option>
+        </select>
+        <div id="notification-server-current" class="notification-server-current">
+          מצב נוכחי: <span id="notification-server-status">Success</span>
+        </div>
+      </div>
+      <div id="notifications-container" class="notifications-container">
+        <p>טוען הודעות...</p>
       </div>
     </div>
   </div>

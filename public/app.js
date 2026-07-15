@@ -5,6 +5,8 @@ let currentReportData = null;
 let queueFilterEnabled = false;
 let readyFilterEnabled = false;
 let currentCityFilter = '';
+let selectedAssessorBuildingId = null;
+let selectedLocalAuthorityBuildingId = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -16,12 +18,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Form submission
   document.getElementById('report-form').addEventListener('submit', createReport);
 
+  const assessorForm = document.getElementById('assessor-form');
+  if (assessorForm) {
+    assessorForm.addEventListener('submit', saveAssessorAssessment);
+  }
+
   const cityFilterInput = document.getElementById('city-filter');
   if (cityFilterInput) {
     cityFilterInput.addEventListener('input', () => {
       currentCityFilter = cityFilterInput.value.trim();
       updateBulkButtonLabel();
       loadReports();
+    });
+  }
+
+  const notificationModeSelect = document.getElementById('notification-mode-select');
+  if (notificationModeSelect) {
+    notificationModeSelect.addEventListener('change', () => {
+      setNotificationServerState(notificationModeSelect.value);
     });
   }
 
@@ -32,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Switch tabs
-function switchTab(e) {
+async function switchTab(e) {
   const tabName = e.target.getAttribute('data-tab');
   
   // Hide all tabs
@@ -48,6 +62,649 @@ function switchTab(e) {
   // Show selected tab
   document.getElementById(tabName).classList.add('active');
   e.target.classList.add('active');
+
+  if (tabName === 'message-center') {
+    await loadNotificationServerState();
+    loadNotifications();
+  }
+
+  if (tabName === 'assessor-portal') {
+    await loadAssessorPortalBuildings();
+  }
+
+  if (tabName === 'local-authority-portal') {
+    await loadLocalAuthorityPortalBuildings();
+  }
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getStatusLabel(status) {
+  const labels = {
+    WAITING_FOR_VALIDATION: 'ממתין לאימות',
+    NEW: 'חדש',
+    IN_REVIEW: 'בהתייחסות',
+    IN_REHABILITATION: 'בשיקום',
+    REHABILITATION_COMPLETED: 'שיקום הושלם'
+  };
+
+  return labels[status] || status || 'לא ידוע';
+}
+
+function getCityFromAddress(address = '') {
+  const parts = String(address).split(',').map(part => part.trim()).filter(Boolean);
+  return parts[0] || 'לא צוין';
+}
+
+function getAuthorityApprovalLabel(value) {
+  if (value === true) {
+    return 'כן';
+  }
+  if (value === false) {
+    return 'לא';
+  }
+  return 'טרם נבדק';
+}
+
+async function loadAssessorPortalBuildings() {
+  try {
+    const response = await fetch(`${API_URL}/reports`);
+    if (!response.ok) {
+      throw new Error('Failed to load buildings');
+    }
+
+    const reports = await response.json();
+    renderAssessorPortalBuildings(reports);
+  } catch (error) {
+    console.error('Error loading assessor portal buildings:', error);
+    const container = document.getElementById('assessor-portal-list');
+    if (container) {
+      container.innerHTML = '<p style="color: red;">שגיאה בטעינת המבנים.</p>';
+    }
+  }
+}
+
+function renderAssessorPortalBuildings(reports) {
+  const container = document.getElementById('assessor-portal-list');
+  const formPanel = document.getElementById('assessor-portal-form');
+  if (!container) {
+    return;
+  }
+
+  if (!reports || reports.length === 0) {
+    container.innerHTML = '<p>אין מבנים זמינים כרגע.</p>';
+    if (formPanel) {
+      formPanel.innerHTML = '';
+    }
+    return;
+  }
+
+  container.innerHTML = reports.map(report => `
+    <div class="assessor-building-card" onclick="selectAssessorBuilding('${report.id}')">
+      <h3>${escapeHtml(report.address || 'ללא כתובת')}</h3>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <p><strong>הערכת שמאי:</strong> ${report.assessorDamageLevel ? 'כן' : 'לא'}</p>
+    </div>
+  `).join('');
+
+  if (!selectedAssessorBuildingId) {
+    const firstReport = reports[0];
+    if (firstReport) {
+      selectAssessorBuilding(firstReport.id);
+    }
+  }
+}
+
+async function selectAssessorBuilding(reportId) {
+  try {
+    const response = await fetch(`${API_URL}/reports/${reportId}`);
+    if (!response.ok) {
+      throw new Error('Failed to load building details');
+    }
+
+    const report = await response.json();
+    selectedAssessorBuildingId = report.id;
+    showAssessorAssessmentForm(report);
+  } catch (error) {
+    console.error('Error selecting assessor building:', error);
+  }
+}
+
+function showAssessorAssessmentForm(report) {
+  const formPanel = document.getElementById('assessor-portal-form');
+  if (!formPanel) {
+    return;
+  }
+
+  const existingDamageLevel = report.assessorDamageLevel || '';
+  const existingNotes = report.assessorNotes || '';
+  const existingDate = report.assessorAssessmentDate || '';
+  const existingFollowUp = Boolean(report.assessorNeedsFollowUp);
+
+  formPanel.innerHTML = `
+    <div class="assessor-form-card">
+      <h3>הזנת הערכת שמאי</h3>
+      <p><strong>כתובת:</strong> ${escapeHtml(report.address || 'ללא כתובת')}</p>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <form id="assessor-form" class="form">
+        <div class="form-group">
+          <label for="assessor-damage-level">דרגת נזק:</label>
+          <select id="assessor-damage-level" required>
+            <option value="">בחר דרגת נזק</option>
+            <option value="קל" ${existingDamageLevel === 'קל' ? 'selected' : ''}>קל</option>
+            <option value="בינוני" ${existingDamageLevel === 'בינוני' ? 'selected' : ''}>בינוני</option>
+            <option value="חמור" ${existingDamageLevel === 'חמור' ? 'selected' : ''}>חמור</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="assessor-notes">הערות שמאי:</label>
+          <textarea id="assessor-notes" rows="4" placeholder="הזן הערות מקצועיות...">${escapeHtml(existingNotes)}</textarea>
+        </div>
+        <div class="form-group">
+          <label for="assessor-date">תאריך בדיקה:</label>
+          <input type="date" id="assessor-date" value="${escapeHtml(existingDate)}">
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="assessor-follow-up" ${existingFollowUp ? 'checked' : ''}>
+            נדרשת בדיקה חוזרת
+          </label>
+        </div>
+        <button type="submit" class="submit-btn">שמור הערכת שמאי</button>
+      </form>
+    </div>
+  `;
+
+  const form = document.getElementById('assessor-form');
+  if (form) {
+    form.addEventListener('submit', saveAssessorAssessment);
+  }
+}
+
+async function saveAssessorAssessment(e) {
+  e.preventDefault();
+
+  if (!selectedAssessorBuildingId) {
+    return;
+  }
+
+  const damageLevel = document.getElementById('assessor-damage-level').value;
+  const notes = document.getElementById('assessor-notes').value;
+  const assessmentDate = document.getElementById('assessor-date').value;
+  const needsFollowUp = document.getElementById('assessor-follow-up').checked;
+
+  try {
+    const response = await fetch(`${API_URL}/reports/${selectedAssessorBuildingId}/assessor-assessment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ damageLevel, notes, assessmentDate, needsFollowUp })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Failed to save assessor assessment');
+    }
+
+    const savedReport = await response.json();
+    const messageDiv = document.getElementById('assessor-portal-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message success';
+      messageDiv.textContent = 'הערכת השמאי נשמרה בהצלחה.';
+    }
+
+    showAssessorAssessmentForm(savedReport);
+    await loadAssessorPortalBuildings();
+    await loadReports();
+  } catch (error) {
+    console.error('Error saving assessor assessment:', error);
+    const messageDiv = document.getElementById('assessor-portal-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message error';
+      messageDiv.textContent = error.message;
+    }
+  }
+}
+
+async function loadLocalAuthorityPortalBuildings() {
+  try {
+    const response = await fetch(`${API_URL}/reports`);
+    if (!response.ok) {
+      throw new Error('Failed to load buildings');
+    }
+
+    const reports = await response.json();
+    renderLocalAuthorityPortalBuildings(reports);
+  } catch (error) {
+    console.error('Error loading local authority portal buildings:', error);
+    const container = document.getElementById('local-authority-portal-list');
+    if (container) {
+      container.innerHTML = '<p style="color: red;">שגיאה בטעינת המבנים.</p>';
+    }
+  }
+}
+
+function renderLocalAuthorityPortalBuildings(reports) {
+  const container = document.getElementById('local-authority-portal-list');
+  const formPanel = document.getElementById('local-authority-portal-form');
+  if (!container) {
+    return;
+  }
+
+  if (!reports || reports.length === 0) {
+    container.innerHTML = '<p>אין מבנים זמינים כרגע.</p>';
+    if (formPanel) {
+      formPanel.innerHTML = '';
+    }
+    return;
+  }
+
+  container.innerHTML = reports.map(report => `
+    <div class="assessor-building-card" onclick="selectLocalAuthorityBuilding('${report.id}')">
+      <h3>${escapeHtml(report.address || 'ללא כתובת')}</h3>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <p><strong>אישור רשות:</strong> ${escapeHtml(getAuthorityApprovalLabel(report.localAuthorityApproval))}</p>
+    </div>
+  `).join('');
+
+  if (!selectedLocalAuthorityBuildingId) {
+    const firstReport = reports[0];
+    if (firstReport) {
+      selectLocalAuthorityBuilding(firstReport.id);
+    }
+  }
+}
+
+async function selectLocalAuthorityBuilding(reportId) {
+  try {
+    const response = await fetch(`${API_URL}/reports/${reportId}`);
+    if (!response.ok) {
+      throw new Error('Failed to load building details');
+    }
+
+    const report = await response.json();
+    selectedLocalAuthorityBuildingId = report.id;
+    showLocalAuthorityApprovalForm(report);
+  } catch (error) {
+    console.error('Error selecting building for local authority portal:', error);
+  }
+}
+
+function showLocalAuthorityApprovalForm(report) {
+  const formPanel = document.getElementById('local-authority-portal-form');
+  if (!formPanel) {
+    return;
+  }
+
+  const existingWaterSupplyOk = Boolean(report.waterSupplyOk);
+  const existingElectricitySupplyOk = Boolean(report.electricitySupplyOk);
+  const existingAccessRoadsOpen = Boolean(report.accessRoadsOpen);
+  const existingEnvironmentalHazardsCleared = Boolean(report.environmentalHazardsCleared);
+  const existingNotes = report.localAuthorityNotes || '';
+  const existingApproval = report.localAuthorityApproval === true ? 'true' : report.localAuthorityApproval === false ? 'false' : '';
+
+  formPanel.innerHTML = `
+    <div class="assessor-form-card">
+      <h3>עדכון אישור רשות מקומית</h3>
+      <p><strong>כתובת:</strong> ${escapeHtml(report.address || 'ללא כתובת')}</p>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <form id="local-authority-form" class="form">
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="water-supply-ok" ${existingWaterSupplyOk ? 'checked' : ''}>
+            אספקת מים תקינה
+          </label>
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="electricity-supply-ok" ${existingElectricitySupplyOk ? 'checked' : ''}>
+            אספקת חשמל תקינה
+          </label>
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="access-roads-open" ${existingAccessRoadsOpen ? 'checked' : ''}>
+            דרכי גישה פתוחות
+          </label>
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="environmental-hazards-cleared" ${existingEnvironmentalHazardsCleared ? 'checked' : ''}>
+            מפגעים סביבתיים פונו
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="local-authority-notes">הערות הרשות המקומית:</label>
+          <textarea id="local-authority-notes" rows="4" placeholder="הזן הערות...">${escapeHtml(existingNotes)}</textarea>
+        </div>
+        <div class="form-group">
+          <label for="local-authority-approval">אישור רשות מקומית:</label>
+          <select id="local-authority-approval">
+            <option value="">בחר</option>
+            <option value="true" ${existingApproval === 'true' ? 'selected' : ''}>כן</option>
+            <option value="false" ${existingApproval === 'false' ? 'selected' : ''}>לא</option>
+          </select>
+        </div>
+        <button type="submit" class="submit-btn">שמור אישור רשות</button>
+      </form>
+    </div>
+  `;
+
+  const form = document.getElementById('local-authority-form');
+  if (form) {
+    form.addEventListener('submit', saveLocalAuthorityApproval);
+  }
+}
+
+async function saveLocalAuthorityApproval(e) {
+  e.preventDefault();
+
+  if (!selectedLocalAuthorityBuildingId) {
+    return;
+  }
+
+  const waterSupplyOk = document.getElementById('water-supply-ok').checked;
+  const electricitySupplyOk = document.getElementById('electricity-supply-ok').checked;
+  const accessRoadsOpen = document.getElementById('access-roads-open').checked;
+  const environmentalHazardsCleared = document.getElementById('environmental-hazards-cleared').checked;
+  const localAuthorityNotes = document.getElementById('local-authority-notes').value;
+  const localAuthorityApprovalValue = document.getElementById('local-authority-approval').value;
+  if (localAuthorityApprovalValue !== 'true' && localAuthorityApprovalValue !== 'false') {
+    const messageDiv = document.getElementById('local-authority-portal-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message error';
+      messageDiv.textContent = 'יש לבחור אישור רשות מקומית';
+    }
+    return;
+  }
+  const localAuthorityApproval = localAuthorityApprovalValue === 'true';
+
+  try {
+    const response = await fetch(`${API_URL}/reports/${selectedLocalAuthorityBuildingId}/local-authority-approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waterSupplyOk,
+        electricitySupplyOk,
+        accessRoadsOpen,
+        environmentalHazardsCleared,
+        localAuthorityNotes,
+        localAuthorityApproval,
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Failed to save local authority approval');
+    }
+
+    const savedReport = await response.json();
+    const messageDiv = document.getElementById('local-authority-portal-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message success';
+      messageDiv.textContent = 'אישור הרשות נשמר בהצלחה.';
+    }
+
+    showLocalAuthorityApprovalForm(savedReport);
+    await loadLocalAuthorityPortalBuildings();
+    await loadReports();
+  } catch (error) {
+    console.error('Error saving local authority approval:', error);
+    const messageDiv = document.getElementById('local-authority-portal-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message error';
+      messageDiv.textContent = error.message;
+    }
+  }
+}
+
+function openAssessorModal() {
+  const report = currentReportData;
+  const modal = document.getElementById('assessor-modal');
+  const content = document.getElementById('assessor-modal-content');
+
+  if (!modal || !content || !report) {
+    return;
+  }
+
+  const existingDamageLevel = report.assessorDamageLevel || '';
+  const existingNotes = report.assessorNotes || '';
+  const existingDate = report.assessorAssessmentDate || '';
+  const existingFollowUp = Boolean(report.assessorNeedsFollowUp);
+
+  content.innerHTML = `
+    <div class="assessor-form-card">
+      <p><strong>כתובת:</strong> ${escapeHtml(report.address || 'ללא כתובת')}</p>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <form id="assessor-popup-form" class="form">
+        <div class="form-group">
+          <label for="assessor-popup-damage-level">דרגת נזק:</label>
+          <select id="assessor-popup-damage-level" required>
+            <option value="">בחר דרגת נזק</option>
+            <option value="קל" ${existingDamageLevel === 'קל' ? 'selected' : ''}>קל</option>
+            <option value="בינוני" ${existingDamageLevel === 'בינוני' ? 'selected' : ''}>בינוני</option>
+            <option value="חמור" ${existingDamageLevel === 'חמור' ? 'selected' : ''}>חמור</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="assessor-popup-notes">הערות שמאי:</label>
+          <textarea id="assessor-popup-notes" rows="4" placeholder="הזן הערות מקצועיות...">${escapeHtml(existingNotes)}</textarea>
+        </div>
+        <div class="form-group">
+          <label for="assessor-popup-date">תאריך בדיקה:</label>
+          <input type="date" id="assessor-popup-date" value="${escapeHtml(existingDate)}">
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="assessor-popup-follow-up" ${existingFollowUp ? 'checked' : ''}>
+            נדרשת בדיקה חוזרת
+          </label>
+        </div>
+        <button type="submit" class="submit-btn">שמור הערכת שמאי</button>
+      </form>
+      <div id="assessor-popup-message" class="assessor-message"></div>
+    </div>
+  `;
+
+  modal.classList.add('open');
+  document.body.classList.add('modal-open');
+
+  const form = document.getElementById('assessor-popup-form');
+  if (form) {
+    form.addEventListener('submit', saveAssessorAssessmentFromPopup);
+  }
+}
+
+function openAssessorModal() {
+  const report = currentReportData;
+  const modal = document.getElementById('assessor-modal');
+  const content = document.getElementById('assessor-modal-content');
+
+  if (!modal || !content || !report) {
+    return;
+  }
+
+  const existingDamageLevel = report.assessorDamageLevel || '';
+  const existingNotes = report.assessorNotes || '';
+  const existingDate = report.assessorAssessmentDate || '';
+  const existingFollowUp = Boolean(report.assessorNeedsFollowUp);
+
+  content.innerHTML = `
+    <div class="assessor-form-card">
+      <p><strong>כתובת:</strong> ${escapeHtml(report.address || 'ללא כתובת')}</p>
+      <p><strong>יישוב:</strong> ${escapeHtml(getCityFromAddress(report.address))}</p>
+      <p><strong>סטטוס טיפול נוכחי:</strong> ${escapeHtml(getStatusLabel(report.status))}</p>
+      <form id="assessor-popup-form" class="form">
+        <div class="form-group">
+          <label for="assessor-popup-damage-level">דרגת נזק:</label>
+          <select id="assessor-popup-damage-level" required>
+            <option value="">בחר דרגת נזק</option>
+            <option value="קל" ${existingDamageLevel === 'קל' ? 'selected' : ''}>קל</option>
+            <option value="בינוני" ${existingDamageLevel === 'בינוני' ? 'selected' : ''}>בינוני</option>
+            <option value="חמור" ${existingDamageLevel === 'חמור' ? 'selected' : ''}>חמור</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="assessor-popup-notes">הערות שמאי:</label>
+          <textarea id="assessor-popup-notes" rows="4" placeholder="הזן הערות מקצועיות...">${escapeHtml(existingNotes)}</textarea>
+        </div>
+        <div class="form-group">
+          <label for="assessor-popup-date">תאריך בדיקה:</label>
+          <input type="date" id="assessor-popup-date" value="${escapeHtml(existingDate)}">
+        </div>
+        <div class="form-group checkbox-group">
+          <label>
+            <input type="checkbox" id="assessor-popup-follow-up" ${existingFollowUp ? 'checked' : ''}>
+            נדרשת בדיקה חוזרת
+          </label>
+        </div>
+        <button type="submit" class="submit-btn">שמור הערכת שמאי</button>
+      </form>
+      <div id="assessor-popup-message" class="assessor-message"></div>
+    </div>
+  `;
+
+  modal.classList.add('open');
+  document.body.classList.add('modal-open');
+
+  const form = document.getElementById('assessor-popup-form');
+  if (form) {
+    form.addEventListener('submit', saveAssessorAssessmentFromPopup);
+  }
+}
+
+function closeAssessorModal() {
+  const modal = document.getElementById('assessor-modal');
+  if (modal) {
+    modal.classList.remove('open');
+  }
+  document.body.classList.remove('modal-open');
+}
+
+async function saveAssessorAssessmentFromPopup(e) {
+  e.preventDefault();
+
+  if (!currentReportId) {
+    return;
+  }
+
+  const damageLevel = document.getElementById('assessor-popup-damage-level').value;
+  const notes = document.getElementById('assessor-popup-notes').value;
+  const assessmentDate = document.getElementById('assessor-popup-date').value;
+  const needsFollowUp = document.getElementById('assessor-popup-follow-up').checked;
+
+  try {
+    const response = await fetch(`${API_URL}/reports/${currentReportId}/assessor-assessment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ damageLevel, notes, assessmentDate, needsFollowUp })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Failed to save assessor assessment');
+    }
+
+    closeAssessorModal();
+    await loadReports();
+    await showDetails(currentReportId);
+  } catch (error) {
+    console.error('Error saving assessor assessment from popup:', error);
+    const messageDiv = document.getElementById('assessor-popup-message');
+    if (messageDiv) {
+      messageDiv.className = 'assessor-message error';
+      messageDiv.textContent = error.message;
+    }
+  }
+}
+
+const READINESS_CATEGORY = {
+  READY: 'READY',
+  WAITING_ASSESSOR: 'WAITING_ASSESSOR',
+  WAITING_LOCAL_AUTHORITY: 'WAITING_LOCAL_AUTHORITY',
+  OTHER: 'OTHER',
+};
+
+function isSettlementReady(report) {
+  return Boolean(report.settlementReadiness && report.settlementReadiness.isReady);
+}
+
+function renderSettlementReadyBadge(report) {
+  const ready = isSettlementReady(report);
+  const label = ready ? 'כן' : 'לא';
+  const className = ready ? 'settlement-ready-badge yes' : 'settlement-ready-badge no';
+  return `<span class="${className}">${label}</span>`;
+}
+
+function hideSettlementSummary() {
+  const container = document.getElementById('settlement-summary');
+  if (container) {
+    container.hidden = true;
+    container.innerHTML = '';
+  }
+}
+
+// כרטיס סיכום מצב היישוב - מוצג רק לאחר בחירת יישוב באמצעות הסינון הקיים.
+function renderSettlementSummary(reportsForCity) {
+  const container = document.getElementById('settlement-summary');
+  if (!container) {
+    return;
+  }
+
+  if (!currentCityFilter) {
+    hideSettlementSummary();
+    return;
+  }
+
+  const total = reportsForCity.length;
+  const counts = reportsForCity.reduce((acc, report) => {
+    const category = (report.settlementReadiness && report.settlementReadiness.category) || READINESS_CATEGORY.OTHER;
+    acc[category] = (acc[category] || 0) + 1;
+    return acc;
+  }, {});
+
+  const ready = counts[READINESS_CATEGORY.READY] || 0;
+  const waitingAssessor = counts[READINESS_CATEGORY.WAITING_ASSESSOR] || 0;
+  const waitingLocalAuthority = counts[READINESS_CATEGORY.WAITING_LOCAL_AUTHORITY] || 0;
+  const other = counts[READINESS_CATEGORY.OTHER] || 0;
+  const notReady = total - ready;
+
+  const cards = [
+    { label: 'מבנים ביישוב', value: total, tone: 'total' },
+    { label: 'כשירים לפתיחת יישוב', value: ready, tone: 'ready' },
+    { label: 'אינם כשירים לפתיחה', value: notReady, tone: 'not-ready' },
+    { label: 'ממתינים להערכת שמאי', value: waitingAssessor, tone: 'waiting' },
+    { label: 'ממתינים לאישור רשות מקומית', value: waitingLocalAuthority, tone: 'waiting' },
+    { label: 'אינם כשירים מסיבות אחרות', value: other, tone: 'other' },
+  ];
+
+  container.hidden = false;
+  container.innerHTML = `
+    <h3 class="settlement-summary-title">סיכום מוכנות היישוב "${escapeHtml(currentCityFilter)}" לפתיחה</h3>
+    <div class="settlement-summary-grid">
+      ${cards.map(card => `
+        <div class="settlement-summary-item tone-${card.tone}">
+          <span class="settlement-summary-value">${card.value}</span>
+          <span class="settlement-summary-label">${escapeHtml(card.label)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 // Load all reports
@@ -59,6 +716,7 @@ async function loadReports() {
     const container = document.getElementById('reports-container');
     
     if (reports.length === 0) {
+      hideSettlementSummary();
       container.innerHTML = '<p>No reports found. Create a new report to get started.</p>';
       return;
     }
@@ -76,6 +734,8 @@ async function loadReports() {
       filteredReports = filteredReports.filter(report => report.hasDamageImages && report.hasEngineerReport && report.eligibilityCheckDone);
     }
 
+    renderSettlementSummary(filteredReports);
+
     if (filteredReports.length === 0) {
       const emptyMessage = readyFilterEnabled
         ? 'No reports are ready for budget release.'
@@ -89,19 +749,24 @@ async function loadReports() {
     container.innerHTML = filteredReports.map(report => `
       <div class="report-card" onclick="showDetails('${report.id}')">
         <div class="report-card-header">
-          <h3>${report.damageType}</h3>
+          <h3>${escapeHtml(report.damageType || 'ללא סוג נזק')}</h3>
           ${report.generatedPackageUrl ? `
             <a class="document-link" href="${report.generatedPackageUrl}" target="_blank" rel="noopener noreferrer" title="פתח תיק חזרה לבית" onclick="event.stopPropagation()">📄</a>
           ` : ''}
         </div>
-        <p><strong>Reporter:</strong> ${report.reporterName}</p>
-        <p><strong>Address:</strong> ${report.address}</p>
-        <p><strong>Description:</strong> ${report.description.substring(0, 100)}...</p>
+        <p><strong>Email:</strong> ${escapeHtml(report.familyEmail || '')}</p>
+        <p><strong>Reporter:</strong> ${escapeHtml(report.reporterName || '')}</p>
+        <p><strong>Address:</strong> ${escapeHtml(report.address || '')}</p>
+        <p><strong>Description:</strong> ${escapeHtml((report.description || '').substring(0, 100))}...</p>
         <p><strong>ממתין בתור לעבודה:</strong> ${report.hasEngineerReport && report.eligibilityCheckDone ? 'כן' : 'לא'}</p>
         <p><strong>מוכן לשחרור תקציב:</strong> ${report.hasDamageImages && report.hasEngineerReport && report.eligibilityCheckDone ? 'כן' : 'לא'}</p>
-        ${report.occupancyPackage && report.occupancyPackage.isAllowed ? `
-          <button class="package-btn" onclick="event.stopPropagation(); generateReturnHomePackage('${report.id}')">הפק תיק אכלוס מחדש</button>
-        ` : ''}
+        <p class="settlement-ready-line"><strong>כשיר לפתיחת יישוב:</strong> ${renderSettlementReadyBadge(report)}</p>
+        <div class="report-card-actions">
+          <button class="details-btn" type="button" onclick="event.stopPropagation(); showDetails('${report.id}')">פתח פרטים</button>
+          ${report.occupancyPackage && report.occupancyPackage.isAllowed ? `
+            <button class="package-btn" onclick="event.stopPropagation(); generateReturnHomePackage('${report.id}')">הפק תיק אכלוס מחדש</button>
+          ` : ''}
+        </div>
         <span class="status-badge status-${report.status}">${report.status}</span>
       </div>
     `).join('');
@@ -137,6 +802,13 @@ function toggleReadyFilter() {
   loadReports();
 }
 
+function openMessageCenter() {
+  const tabBtn = document.querySelector('[data-tab="message-center"]');
+  if (tabBtn) {
+    switchTab({ target: tabBtn });
+  }
+}
+
 // Create new report
 async function createReport(e) {
   e.preventDefault();
@@ -148,6 +820,7 @@ async function createReport(e) {
   const hasDamageImages = document.getElementById('hasDamageImages').checked;
   const hasEngineerReport = document.getElementById('hasEngineerReport').checked;
   const eligibilityCheckDone = document.getElementById('eligibilityCheckDone').checked;
+  const familyEmail = document.getElementById('familyEmail').value;
   const apartmentsCount = parseInt(document.getElementById('apartmentsCount').value, 10);
 
   try {
@@ -164,6 +837,7 @@ async function createReport(e) {
         hasDamageImages,
         hasEngineerReport,
         eligibilityCheckDone,
+        familyEmail,
         apartmentsCount
       })
     });
@@ -206,6 +880,7 @@ async function showDetails(reportId) {
 
     const report = await response.json();
     currentReportId = report.id;
+    currentReportData = report;
 
     // Populate modal
     const detailsContent = document.getElementById('report-details-content');
@@ -223,12 +898,46 @@ async function showDetails(reportId) {
         <div class="detail-value">${report.address}</div>
       </div>
       <div class="detail-row">
+        <div class="detail-label">Family Email</div>
+        <div class="detail-value">${report.familyEmail || '---'}</div>
+      </div>
+      <div class="detail-row">
         <div class="detail-label">Damage Type</div>
         <div class="detail-value">${report.damageType}</div>
       </div>
       <div class="detail-row">
         <div class="detail-label">Description</div>
         <div class="detail-value">${report.description}</div>
+      </div>
+      <div class="detail-row">
+        <div class="detail-label">הערכת שמאי</div>
+        <div class="detail-value">
+          ${report.assessorDamageLevel || report.assessorNotes || report.assessorAssessmentDate || report.assessorNeedsFollowUp
+            ? `
+              <div><strong>דרגת נזק:</strong> ${escapeHtml(report.assessorDamageLevel || 'לא הוזנה')}</div>
+              <div><strong>הערות:</strong> ${escapeHtml(report.assessorNotes || '---')}</div>
+              <div><strong>תאריך בדיקה:</strong> ${escapeHtml(report.assessorAssessmentDate || '---')}</div>
+              <div><strong>בדיקה חוזרת:</strong> ${report.assessorNeedsFollowUp ? 'כן' : 'לא'}</div>
+            `
+            : 'טרם הוזנה הערכת שמאי'}
+        </div>
+      </div>
+      <div class="detail-row">
+        <div class="detail-label">הזנת הערכת שמאי</div>
+        <div class="detail-value">
+          <button class="save-btn small-submit" onclick="openAssessorModal()">הזנת הערכת שמאי</button>
+        </div>
+      </div>
+      <div class="detail-row">
+        <div class="detail-label">אישור רשות מקומית</div>
+        <div class="detail-value">
+          <div><strong>אישור רשות:</strong> ${escapeHtml(getAuthorityApprovalLabel(report.localAuthorityApproval))}</div>
+          <div><strong>אספקת מים תקינה:</strong> ${report.waterSupplyOk ? 'כן' : 'לא'}</div>
+          <div><strong>אספקת חשמל תקינה:</strong> ${report.electricitySupplyOk ? 'כן' : 'לא'}</div>
+          <div><strong>דרכי גישה פתוחות:</strong> ${report.accessRoadsOpen ? 'כן' : 'לא'}</div>
+          <div><strong>מפגעים סביבתיים פונו:</strong> ${report.environmentalHazardsCleared ? 'כן' : 'לא'}</div>
+          <div><strong>הערות:</strong> ${escapeHtml(report.localAuthorityNotes || '---')}</div>
+        </div>
       </div>
       <div class="detail-row">
         <div class="detail-label">קיימות תמונות נזק</div>
@@ -299,7 +1008,11 @@ async function showDetails(reportId) {
     updateBudgetRequestButton(report);
 
     // Open modal
-    document.getElementById('details-modal').classList.add('open');
+    const detailsModal = document.getElementById('details-modal');
+    if (detailsModal) {
+      detailsModal.classList.add('open');
+      document.body.classList.add('modal-open');
+    }
   } catch (error) {
     console.error('Error loading report details:', error);
     alert('Error loading report details');
@@ -308,9 +1021,13 @@ async function showDetails(reportId) {
 
 // Close details modal
 function closeDetailsModal() {
-  document.getElementById('details-modal').classList.remove('open');
+  const modal = document.getElementById('details-modal');
+  if (modal) {
+    modal.classList.remove('open');
+  }
   currentReportId = null;
   currentReportData = null;
+  document.body.classList.remove('modal-open');
 }
 
 function updateBudgetRequestButton(report) {
@@ -395,6 +1112,7 @@ function showLoadingModal() {
   const modal = document.getElementById('loading-modal');
   if (modal) {
     modal.classList.add('open');
+    document.body.classList.add('modal-open');
   }
 }
 
@@ -403,6 +1121,7 @@ function hideLoadingModal() {
   if (modal) {
     modal.classList.remove('open');
   }
+  document.body.classList.remove('modal-open');
 }
 
 async function bulkGenerateReturnHomePackages() {
@@ -521,8 +1240,120 @@ async function updateStatus() {
 
 // Close modal when clicking outside of it
 window.addEventListener('click', (event) => {
-  const modal = document.getElementById('details-modal');
-  if (event.target === modal) {
+  const detailsModal = document.getElementById('details-modal');
+  const assessorModal = document.getElementById('assessor-modal');
+
+  if (event.target === detailsModal) {
     closeDetailsModal();
   }
+
+  if (event.target === assessorModal) {
+    closeAssessorModal();
+  }
 });
+
+async function loadNotificationServerState() {
+  try {
+    const response = await fetch(`${SERVICE_URL}/notifications/state`);
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    const select = document.getElementById('notification-mode-select');
+    if (select) {
+      select.value = data.mode;
+    }
+
+    const status = document.getElementById('notification-server-status');
+    if (status) {
+      status.textContent = data.mode;
+    }
+  } catch (error) {
+    console.error('Error loading notification server state:', error);
+  }
+}
+
+async function setNotificationServerState(mode) {
+  try {
+    const response = await fetch(`${SERVICE_URL}/notifications/state`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Failed to update notification server state');
+    }
+
+    const data = await response.json();
+    const status = document.getElementById('notification-server-status');
+    if (status) {
+      status.textContent = data.mode;
+    }
+    loadNotifications();
+  } catch (error) {
+    console.error('Error updating notification server state:', error);
+    alert('Failed to update notification server state. Please try again.');
+  }
+}
+
+async function loadNotifications() {
+  try {
+    const response = await fetch(`${API_URL}/notifications`);
+    const notifications = await response.json();
+    renderNotifications(notifications);
+  } catch (error) {
+    console.error('Error loading notifications:', error);
+    const container = document.getElementById('notifications-container');
+    if (container) {
+      container.innerHTML = '<p style="color: red;">Error loading notifications.</p>';
+    }
+  }
+}
+
+function renderNotifications(notifications) {
+  const container = document.getElementById('notifications-container');
+  if (!container) {
+    return;
+  }
+
+  if (!notifications || notifications.length === 0) {
+    container.innerHTML = '<p>No notifications have been sent yet.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="notifications-table">
+      <thead>
+        <tr>
+          <th>Message ID</th>
+          <th>Building ID</th>
+          <th>Idempotency Key</th>
+          <th>כתובת המבנה</th>
+          <th>כתובת המייל</th>
+          <th>Subject</th>
+          <th>Date & Time</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${notifications.map(notification => `
+          <tr>
+            <td>${notification.messageId}</td>
+            <td>${notification.buildingId}</td>
+            <td>${notification.idempotencyKey}</td>
+            <td>${notification.address || '---'}</td>
+            <td>${notification.email}</td>
+            <td>${notification.subject}</td>
+                <td>${notification.sentAt}</td>
+                <td><span class="notification-status notification-status-${notification.status}">${notification.status}</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
