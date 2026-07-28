@@ -8,18 +8,32 @@
  *   Buildings            → Ministry of Housing   (domains/buildings/)
  *   Assessments          → Assessors team         (domains/assessments/)
  *   Municipal Approvals  → Municipalities team    (domains/municipal-approvals/)
+ *   Auth                 → Shared infrastructure  (domains/auth/)
  */
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const session = require('express-session');
 
 // Shared infrastructure
 const notificationService = require('./services/notificationService');
+const activityLogService = require('./services/activityLogService');
 
 // Domain routers (factory functions – receive only what they need)
 const { createBuildingsRouter } = require('./domains/buildings/buildingsRouter');
 const { createAssessmentsRouter } = require('./domains/assessments/assessmentsRouter');
 const { createMunicipalRouter } = require('./domains/municipal-approvals/municipalRouter');
+const { createAuthRouter } = require('./domains/auth/authRouter');
+const { createSettlementProcessesRouter } = require('./domains/settlement-processes/settlementProcessesRouter');
+
+// Settlement process tracking service
+const settlementProcessService = require('./services/settlementProcessService');
+
+// System health metrics
+const systemHealthService = require('./services/systemHealthService');
+
+// Occupancy process logger
+const occupancyLogger = require('./services/occupancyProcessLogger');
 
 // Building service – needed to provide lookup/enrich callbacks to other domain routers
 const buildingService = require('./domains/buildings/buildingService');
@@ -30,8 +44,14 @@ const PORT = process.env.PORT || 3000;
 // ---------------------------------------------------------------------------
 // Middleware
 // ---------------------------------------------------------------------------
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+app.use(session({
+  secret: 'damage-reports-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, maxAge: 8 * 60 * 60 * 1000 }, // 8 hours
+}));
 app.use(express.static('public'));
 
 // ---------------------------------------------------------------------------
@@ -94,7 +114,7 @@ function sendNotificationViaApi(payload) {
 
 // POST /notifications/send
 app.post('/notifications/send', async (req, res) => {
-  const { buildingId, email, subject, body, idempotencyKey } = req.body;
+  const { buildingId, email, subject, body, idempotencyKey, correlationId } = req.body;
   if (!buildingId || !email || !subject || !body || !idempotencyKey) {
     return res.status(400).json({ error: 'buildingId, email, subject, body and idempotencyKey are required' });
   }
@@ -109,9 +129,18 @@ app.post('/notifications/send', async (req, res) => {
 
   let result;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (logNotificationAttempt) {
+      logNotificationAttempt({ buildingId, attempt, phase: 'start', correlationId });
+    }
     result = await notificationService.sendNotification({ buildingId, email, subject, body, address, idempotencyKey });
     if (result.status === 'SENT') {
+      if (logNotificationAttempt) {
+        logNotificationAttempt({ buildingId, attempt, phase: 'success', correlationId });
+      }
       break;
+    }
+    if (logNotificationAttempt) {
+      logNotificationAttempt({ buildingId, attempt, phase: 'failed', error: result.error || result.status, correlationId });
     }
   }
 
@@ -147,21 +176,57 @@ app.get('/api/notifications', (req, res) => {
 // Callbacks passed in keep domain routers decoupled from each other.
 // ---------------------------------------------------------------------------
 
+// Auth domain – login / logout / session check
+app.use(createAuthRouter());
+
 // Buildings domain – owns core data, rehab, packages, dashboard
-app.use(createBuildingsRouter({ sendNotificationViaApi }));
+// logNotificationAttempt bridges the retry loop here into the buildings router logger.
+function logNotificationAttempt({ buildingId, attempt, phase, error, correlationId }) {
+  // Get building to extract settlement name for logging
+  const building = buildingService.findBuilding(buildingId);
+  const settlementName = building && building.address ? building.address.split(',')[0].trim() : '';
+  
+  const ctx = { settlementName, buildingId, correlationId };
+  if (phase === 'start') {
+    if (attempt === 1) {
+      occupancyLogger.notificationAttemptStarted({ ...ctx, attempt });
+    } else {
+      occupancyLogger.notificationRetryStarted({ ...ctx, attempt });
+    }
+  } else if (phase === 'success') {
+    occupancyLogger.notificationSucceeded({ ...ctx, attempt });
+  } else if (phase === 'failed') {
+    occupancyLogger.notificationAttemptFailed({ ...ctx, attempt, errorMessage: error || 'unknown' });
+  }
+}
+
+app.use(createBuildingsRouter({ sendNotificationViaApi, activityLogService, settlementProcessService, logNotificationAttempt }));
 
 // Assessments domain – owned by the assessors team
 // Receives lookup/enrich callbacks so it never imports buildingService directly
 app.use(createAssessmentsRouter({
   findBuilding: id => buildingService.findBuilding(id),
   enrichBuilding: id => buildingService.enrichBuilding(id),
+  activityLogService,
 }));
 
 // Municipal Approvals domain – owned by the municipalities team
 app.use(createMunicipalRouter({
   findBuilding: id => buildingService.findBuilding(id),
   enrichBuilding: id => buildingService.enrichBuilding(id),
+  activityLogService,
 }));
+
+// Settlement Processes domain – tracks bulk occupancy package runs
+app.use(createSettlementProcessesRouter());
+
+// ---------------------------------------------------------------------------
+// System Health – read-only metrics for administrators
+// ---------------------------------------------------------------------------
+app.get('/api/system-health', (req, res) => {
+  const metrics = systemHealthService.getMetrics({ settlementProcessService, notificationService });
+  res.json(metrics);
+});
 
 // ---------------------------------------------------------------------------
 // Start

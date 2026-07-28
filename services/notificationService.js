@@ -95,6 +95,29 @@ function getNotifications() {
   return notifications.map(notification => ({ ...notification }));
 }
 
+/**
+ * Return aggregate notification counts.
+ * retryCount = total attempts minus the first attempt per unique idempotencyKey.
+ * @returns {{ successful: number, failed: number, retryCount: number }}
+ */
+function getMetrics() {
+  const successful = notifications.filter(n => n.status === 'SENT').length;
+  const failed     = notifications.filter(n => n.status === 'FAILED').length;
+
+  // Count how many attempts each idempotencyKey has had.
+  // Any attempt beyond the first is a retry.
+  const attemptsByKey = notifications.reduce((acc, n) => {
+    acc[n.idempotencyKey] = (acc[n.idempotencyKey] || 0) + 1;
+    return acc;
+  }, {});
+  const retryCount = Object.values(attemptsByKey).reduce(
+    (sum, count) => sum + Math.max(0, count - 1),
+    0,
+  );
+
+  return { successful, failed, retryCount };
+}
+
 function getNotificationMode() {
   return currentMode;
 }
@@ -113,6 +136,7 @@ module.exports = {
   sendNotification,
   hasSuccessfullySentNotification,
   getNotifications,
+  getMetrics,
   getNotificationMode,
   setNotificationMode,
   NOTIFICATION_MODES,
