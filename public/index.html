@@ -7,9 +7,41 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
+  <!-- ===== Login Overlay ===== -->
+  <div id="login-overlay" class="login-overlay">
+    <div class="login-box">
+      <h2>כניסה למערכת</h2>
+      <div id="login-error" class="login-error" hidden></div>
+      <form id="login-form" class="form">
+        <div class="form-group">
+          <label for="login-username">שם משתמש:</label>
+          <input type="text" id="login-username" required placeholder="username" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="login-password">סיסמה:</label>
+          <input type="password" id="login-password" required placeholder="password" autocomplete="current-password">
+        </div>
+        <button type="submit" class="submit-btn">כניסה</button>
+      </form>
+      <div class="login-hint">
+        <strong>משתמשים לדוגמה:</strong><br>
+        israel / password1 &nbsp;–&nbsp; משרד השיכון<br>
+        sarah / password2 &nbsp;–&nbsp; משרד השיכון<br>
+        david / password3 &nbsp;–&nbsp; רשות מקומית<br>
+        miriam / password4 &nbsp;–&nbsp; רשות מקומית<br>
+        yosef / password5 &nbsp;–&nbsp; שמאי
+      </div>
+    </div>
+  </div>
+
   <div class="container">
     <header>
       <h1>Damage Reports Management System</h1>
+      <div id="user-bar" class="user-bar" hidden>
+        <span id="user-bar-name" class="user-bar-name"></span>
+        <button class="logout-btn" onclick="logout()">התנתקות</button>
+      </div>
     </header>
 
     <nav class="nav-tabs">
@@ -18,6 +50,8 @@
       <button class="tab-btn" data-tab="local-authority-portal">פורטל רשויות מקומיות</button>
       <button class="tab-btn" data-tab="create-report">Create Report</button>
       <button class="tab-btn" data-tab="message-center">מרכז הודעות</button>
+      <button class="tab-btn" data-tab="settlement-processes">Settlement Processes</button>
+      <button class="tab-btn" data-tab="system-health">System Health</button>
     </nav>
 
     <!-- Reports List Tab -->
@@ -150,6 +184,14 @@
           </select>
           <button onclick="updateStatus()" class="save-btn">Save Status</button>
         </div>
+
+        <div id="activity-log-section" class="activity-log-section">
+          <h3>היסטוריית פעולות</h3>
+          <div id="activity-log-container" class="activity-log-container">
+            <p>טוען...</p>
+          </div>
+        </div>
+
         <button onclick="closeDetailsModal()" class="close-btn">Close</button>
       </div>
     </div>
@@ -181,6 +223,24 @@
         <p>טוען הודעות...</p>
       </div>
     </div>
+  <div id="settlement-processes" class="tab-content">
+    <h2>Settlement Processes</h2>
+    <div id="settlement-processes-container" class="notifications-container">
+      <p>טוען תהליכים...</p>
+    </div>
+  </div>
+
+  <div id="system-health" class="tab-content">
+    <h2>System Health</h2>
+    <div class="health-toolbar">
+      <button class="refresh-btn" onclick="loadSystemHealth()">Refresh</button>
+      <span id="health-last-updated" class="health-last-updated"></span>
+    </div>
+    <div id="system-health-container">
+      <p>טוען נתונים...</p>
+    </div>
+  </div>
+
   </div>
 
   <div id="loading-modal" class="modal loading-modal">

@@ -8,8 +8,137 @@ let currentCityFilter = '';
 let selectedAssessorBuildingId = null;
 let selectedLocalAuthorityBuildingId = null;
 
+// ---------------------------------------------------------------------------
+// Auth state
+// ---------------------------------------------------------------------------
+let currentUser = null; // { id, fullName, username } or null
+
+function setCurrentUser(user) {
+  currentUser = user;
+  const overlay = document.getElementById('login-overlay');
+  const userBar = document.getElementById('user-bar');
+  const userBarName = document.getElementById('user-bar-name');
+
+  if (user) {
+    overlay.classList.add('hidden');
+    userBar.hidden = false;
+    userBarName.textContent = `${user.fullName} (${getRoleLabel(user.role)})`;
+    applyRoleRestrictions(user);
+  } else {
+    overlay.classList.remove('hidden');
+    userBar.hidden = true;
+    userBarName.textContent = '';
+    applyRoleRestrictions(null);
+  }
+}
+
+/** Human-readable role labels in Hebrew */
+function getRoleLabel(role) {
+  const labels = {
+    MINISTRY: 'משרד השיכון',
+    MUNICIPALITY: 'רשות מקומית',
+    APPRAISER: 'שמאי',
+  };
+  return labels[role] || role || '';
+}
+
+/**
+ * Show/hide tabs and UI sections based on the logged-in user's role.
+ * The server enforces these rules too – the UI changes are just UX sugar.
+ *
+ * MINISTRY     – sees everything
+ * MUNICIPALITY – no assessor portal tab, no budget button, city filter locked to their settlement
+ * APPRAISER    – no local authority portal tab, no budget button
+ */
+function applyRoleRestrictions(user) {
+  const role = user ? user.role : null;
+
+  // --- Tab visibility ---
+  const assessorTab = document.querySelector('[data-tab="assessor-portal"]');
+  const localAuthTab = document.querySelector('[data-tab="local-authority-portal"]');
+
+  if (assessorTab) {
+    assessorTab.style.display = (role === 'MUNICIPALITY') ? 'none' : '';
+  }
+  if (localAuthTab) {
+    localAuthTab.style.display = (role === 'APPRAISER') ? 'none' : '';
+  }
+
+  // --- City filter: lock to settlement for MUNICIPALITY ---
+  const cityFilterInput = document.getElementById('city-filter');
+  if (cityFilterInput) {
+    if (role === 'MUNICIPALITY' && user.settlementId) {
+      // Map settlementId → Hebrew name for display
+      const SETTLEMENT_NAMES = { jerusalem: 'ירושלים', safed: 'צפת', tiberias: 'טבריה' };
+      const settlementName = SETTLEMENT_NAMES[user.settlementId] || user.settlementId;
+      cityFilterInput.value = settlementName;
+      cityFilterInput.disabled = true;
+      cityFilterInput.title = 'גישה מוגבלת ליישוב שלך בלבד';
+      currentCityFilter = settlementName;
+    } else {
+      cityFilterInput.disabled = false;
+      cityFilterInput.title = '';
+    }
+  }
+
+  // --- Budget section in details modal ---
+  // Handled per-open inside showDetails() using currentUser.role directly.
+}
+
+async function logout() {
+  try {
+    await fetch(`${API_URL}/auth/logout`, { method: 'POST' });
+  } catch (_) { /* ignore */ }
+  setCurrentUser(null);
+}
+
+async function handleLoginSubmit(e) {
+  e.preventDefault();
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errorDiv = document.getElementById('login-error');
+  errorDiv.hidden = true;
+
+  try {
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      errorDiv.textContent = data?.error || 'שגיאה בהתחברות';
+      errorDiv.hidden = false;
+      return;
+    }
+
+    const data = await res.json();
+    setCurrentUser(data.user);
+    document.getElementById('login-form').reset();
+    loadReports();
+  } catch (err) {
+    errorDiv.textContent = 'שגיאת רשת – נסה שנית';
+    errorDiv.hidden = false;
+  }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+  // Login form
+  document.getElementById('login-form').addEventListener('submit', handleLoginSubmit);
+
+  // Restore session on page load
+  fetch(`${API_URL}/auth/me`)
+    .then(res => res.ok ? res.json() : null)
+    .then(data => {
+      if (data && data.user) {
+        setCurrentUser(data.user);
+        loadReports();
+      }
+      // If not logged in, overlay stays visible (setCurrentUser(null) is default)
+    })
+    .catch(() => { /* stay on login */ });
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', switchTab);
@@ -41,8 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   updateBulkButtonLabel();
 
-  // Load reports on startup
-  loadReports();
+  // Reports are loaded after session check above
 });
 
 // Switch tabs
@@ -66,6 +194,14 @@ async function switchTab(e) {
   if (tabName === 'message-center') {
     await loadNotificationServerState();
     loadNotifications();
+  }
+
+  if (tabName === 'settlement-processes') {
+    loadSettlementProcesses();
+  }
+
+  if (tabName === 'system-health') {
+    loadSystemHealth();
   }
 
   if (tabName === 'assessor-portal') {
@@ -925,7 +1061,9 @@ async function showDetails(reportId) {
       <div class="detail-row">
         <div class="detail-label">הזנת הערכת שמאי</div>
         <div class="detail-value">
-          <button class="save-btn small-submit" onclick="openAssessorModal()">הזנת הערכת שמאי</button>
+          ${(currentUser && currentUser.role !== 'MUNICIPALITY')
+            ? '<button class="save-btn small-submit" onclick="openAssessorModal()">הזנת הערכת שמאי</button>'
+            : '<span class="role-blocked-note">אין הרשאה לעדכן שמאות</span>'}
         </div>
       </div>
       <div class="detail-row">
@@ -979,6 +1117,12 @@ async function showDetails(reportId) {
     // Set current status in select
     document.getElementById('status-select').value = report.status;
 
+    // Show/hide the entire budget section based on role (MINISTRY only)
+    const budgetSection = document.getElementById('budget-section');
+    if (budgetSection) {
+      budgetSection.style.display = (currentUser && currentUser.role === 'MINISTRY') ? '' : 'none';
+    }
+
     // Configure budget request button and message
     const openBudgetBtn = document.getElementById('open-budget-btn');
     const budgetMessage = document.getElementById('budget-message');
@@ -1013,6 +1157,9 @@ async function showDetails(reportId) {
       detailsModal.classList.add('open');
       document.body.classList.add('modal-open');
     }
+
+    // Load activity log for this building
+    loadActivityLog(report.id);
   } catch (error) {
     console.error('Error loading report details:', error);
     alert('Error loading report details');
@@ -1356,4 +1503,203 @@ function renderNotifications(notifications) {
       </tbody>
     </table>
   `;
+}
+
+// ---------------------------------------------------------------------------
+// Activity Log
+// ---------------------------------------------------------------------------
+
+async function loadActivityLog(reportId) {
+  const container = document.getElementById('activity-log-container');
+  if (!container) return;
+
+  container.innerHTML = '<p class="activity-log-empty">טוען היסטוריה...</p>';
+
+  try {
+    const res = await fetch(`${API_URL}/reports/${reportId}/activity-log`);
+    if (!res.ok) throw new Error('Failed to load activity log');
+    const entries = await res.json();
+    renderActivityLog(entries);
+  } catch (err) {
+    console.error('Error loading activity log:', err);
+    container.innerHTML = '<p class="activity-log-empty">שגיאה בטעינת ההיסטוריה.</p>';
+  }
+}
+
+function formatTimestamp(isoString) {
+  if (!isoString) return '---';
+  const d = new Date(isoString);
+  const date = d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return `${date} ${time}`;
+}
+
+function renderActivityLog(entries) {
+  const container = document.getElementById('activity-log-container');
+  if (!container) return;
+
+  if (!entries || entries.length === 0) {
+    container.innerHTML = '<p class="activity-log-empty">לא קיימות פעולות מתועדות עבור מבנה זה.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="activity-log-table">
+      <thead>
+        <tr>
+          <th>תאריך ושעה</th>
+          <th>משתמש</th>
+          <th>פעולה</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${entries.map(entry => `
+          <tr>
+            <td>${escapeHtml(formatTimestamp(entry.timestamp))}</td>
+            <td>${escapeHtml(entry.userName || entry.userId)}</td>
+            <td>${escapeHtml(entry.action)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Settlement Processes
+// ---------------------------------------------------------------------------
+
+async function loadSettlementProcesses() {
+  const container = document.getElementById('settlement-processes-container');
+  if (!container) return;
+
+  container.innerHTML = '<p>טוען תהליכים...</p>';
+
+  try {
+    const res = await fetch(`${API_URL}/settlement-processes`);
+    if (!res.ok) throw new Error('Failed to load settlement processes');
+    const processes = await res.json();
+    renderSettlementProcesses(processes);
+  } catch (err) {
+    console.error('Error loading settlement processes:', err);
+    container.innerHTML = '<p style="color: red;">שגיאה בטעינת התהליכים.</p>';
+  }
+}
+
+function renderSettlementProcesses(processes) {
+  const container = document.getElementById('settlement-processes-container');
+  if (!container) return;
+
+  if (!processes || processes.length === 0) {
+    container.innerHTML = '<p>לא קיימים תהליכים עדיין.</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="notifications-table">
+      <thead>
+        <tr>
+          <th>Settlement</th>
+          <th>Started By</th>
+          <th>Started At</th>
+          <th>Completed At</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${processes.map(p => `
+          <tr>
+            <td>${escapeHtml(p.settlementName || '—')}</td>
+            <td>${escapeHtml(p.startedBy || '—')}</td>
+            <td>${escapeHtml(formatTimestamp(p.startedAt))}</td>
+            <td>${p.completedAt ? escapeHtml(formatTimestamp(p.completedAt)) : '—'}</td>
+            <td><span class="notification-status notification-status-${p.status}">${escapeHtml(p.status)}</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// System Health
+// ---------------------------------------------------------------------------
+
+async function loadSystemHealth() {
+  const container = document.getElementById('system-health-container');
+  const lastUpdated = document.getElementById('health-last-updated');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`${API_URL}/system-health`);
+    if (!res.ok) throw new Error('Failed to load system health');
+    const metrics = await res.json();
+    renderSystemHealth(metrics);
+    if (lastUpdated) {
+      lastUpdated.textContent = `עודכן לאחרונה: ${formatTimestamp(new Date().toISOString())}`;
+    }
+  } catch (err) {
+    console.error('Error loading system health:', err);
+    container.innerHTML = '<p style="color: red;">שגיאה בטעינת נתוני המערכת.</p>';
+  }
+}
+
+function formatDuration(ms) {
+  if (ms === null || ms === undefined) return '—';
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSecs = seconds % 60;
+  return remainingSecs > 0 ? `${minutes}m ${remainingSecs}s` : `${minutes}m`;
+}
+
+function renderSystemHealth(metrics) {
+  const container = document.getElementById('system-health-container');
+  if (!container) return;
+
+  const { settlementProcesses, notifications, performance } = metrics;
+
+  const sections = [
+    {
+      title: 'Settlement Processes',
+      items: [
+        { label: 'Completed',  value: settlementProcesses.completed,  tone: 'ready' },
+        { label: 'Processing', value: settlementProcesses.processing,  tone: 'waiting' },
+      ],
+    },
+    {
+      title: 'Notifications',
+      items: [
+        { label: 'Successful',   value: notifications.successful, tone: 'ready' },
+        { label: 'Failed',       value: notifications.failed,     tone: notifications.failed > 0 ? 'not-ready' : 'neutral' },
+        { label: 'Retry Count',  value: notifications.retryCount, tone: notifications.retryCount > 0 ? 'waiting' : 'neutral' },
+      ],
+    },
+    {
+      title: 'Performance',
+      items: [
+        {
+          label: 'Avg Settlement Duration',
+          value: formatDuration(performance.averageSettlementDurationMs),
+          tone: 'total',
+          wide: true,
+        },
+      ],
+    },
+  ];
+
+  container.innerHTML = sections.map(section => `
+    <div class="health-section">
+      <h3 class="health-section-title">${escapeHtml(section.title)}</h3>
+      <div class="health-metrics-grid">
+        ${section.items.map(item => `
+          <div class="health-metric-card tone-${item.tone}${item.wide ? ' health-metric-wide' : ''}">
+            <span class="health-metric-value">${escapeHtml(String(item.value))}</span>
+            <span class="health-metric-label">${escapeHtml(item.label)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
 }

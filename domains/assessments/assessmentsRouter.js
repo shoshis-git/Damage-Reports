@@ -4,43 +4,53 @@
  * Exposes the public API surface of the Assessments domain.
  * Only this router may call saveAssessment(); all other
  * domains are read-only consumers via getAssessment().
+ *
+ * Allowed roles: MINISTRY, APPRAISER
  */
 const express = require('express');
 const assessmentService = require('./assessmentService');
-
-const router = express.Router();
+const { requireRole } = require('../../services/authMiddleware');
 
 /**
- * POST /api/reports/:id/assessor-assessment
- * Save (create or update) an assessor assessment for a building.
- * The building itself is looked up via the buildingLookup callback
- * injected at mount time so this domain does not import buildingService
- * directly (avoiding circular dependencies and enforcing the boundary).
- *
- * The router is created as a factory so that buildingLookup and
- * enrichBuilding can be provided by the application layer.
+ * Factory function – a NEW router is created on every call so that the
+ * route (including its middleware chain) is always fresh and the module-level
+ * singleton pattern cannot bypass requireRole.
  */
-function createAssessmentsRouter({ findBuilding, enrichBuilding }) {
-  /**
-   * POST /api/reports/:id/assessor-assessment
-   */
-  router.post('/api/reports/:id/assessor-assessment', (req, res) => {
-    const building = findBuilding(req.params.id);
-    if (!building) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
+function createAssessmentsRouter({ findBuilding, enrichBuilding, activityLogService }) {
+  // Create a fresh router instance per factory call
+  const router = express.Router();
 
-    const { damageLevel, notes, assessmentDate, needsFollowUp } = req.body;
+  router.post(
+    '/api/reports/:id/assessor-assessment',
+    requireRole('MINISTRY', 'APPRAISER'),
+    (req, res) => {
+      const building = findBuilding(req.params.id);
+      if (!building) {
+        return res.status(404).json({ error: 'Report not found' });
+      }
 
-    if (!assessmentService.isValidDamageLevel(damageLevel)) {
-      return res.status(400).json({ error: 'damageLevel must be one of: קל, בינוני, חמור' });
-    }
+      const { damageLevel, notes, assessmentDate, needsFollowUp } = req.body;
 
-    assessmentService.saveAssessment(req.params.id, { damageLevel, notes, assessmentDate, needsFollowUp });
+      if (!assessmentService.isValidDamageLevel(damageLevel)) {
+        return res.status(400).json({ error: 'damageLevel must be one of: קל, בינוני, חמור' });
+      }
 
-    // Return the full enriched building view (includes assessment data merged in)
-    res.json(enrichBuilding(req.params.id));
-  });
+      assessmentService.saveAssessment(req.params.id, { damageLevel, notes, assessmentDate, needsFollowUp });
+
+      // Log the action – only reached when role check passed
+      if (activityLogService && req.session && req.session.user) {
+        activityLogService.log({
+          userId: req.session.user.id,
+          userName: req.session.user.fullName,
+          action: 'עדכון שמאות',
+          entityType: 'building',
+          entityId: req.params.id,
+        });
+      }
+
+      res.json(enrichBuilding(req.params.id));
+    },
+  );
 
   return router;
 }

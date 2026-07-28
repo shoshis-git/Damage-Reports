@@ -27,14 +27,26 @@ const buildings = new Map(); // buildingId → building record
 // ---------------------------------------------------------------------------
 // Seed data
 // ---------------------------------------------------------------------------
+
+// Settlement definitions – used to distribute seed buildings across cities.
+// settlementId must match the settlementId on MUNICIPALITY users in userService.
+const SETTLEMENTS = [
+  { id: 'jerusalem', name: 'ירושלים' },
+  { id: 'safed',     name: 'צפת'     },
+  { id: 'tiberias',  name: 'טבריה'   },
+];
+
 function createSampleBuilding(index, overrides = {}) {
   const isEligible = index <= 10;
+  // Distribute buildings evenly across the three settlements (round-robin)
+  const settlement = SETTLEMENTS[(index - 1) % SETTLEMENTS.length];
   return {
     id: uuidv4(),
     reporterName: `מבנה ${String(index).padStart(2, '0')}`,
-    address: `ירושלים, רחוב ${index + 10}`,
+    address: `${settlement.name}, רחוב ${index + 10}`,
+    settlementId: settlement.id,
     damageType: index % 3 === 0 ? 'Water Damage' : 'Structural Damage',
-    description: `דוגמה למבנה ${index} באזור ירושלים`,
+    description: `דוגמה למבנה ${index} באזור ${settlement.name}`,
     hasDamageImages: true,
     hasEngineerReport: isEligible,
     eligibilityCheckDone: isEligible,
@@ -121,11 +133,12 @@ function getEnrichedBuildings(cityFilter = '') {
 }
 
 /** Create a new building record. */
-function createBuilding({ reporterName, address, damageType, description, hasDamageImages, hasEngineerReport, eligibilityCheckDone, apartmentsCount, familyEmail }) {
+function createBuilding({ reporterName, address, settlementId, damageType, description, hasDamageImages, hasEngineerReport, eligibilityCheckDone, apartmentsCount, familyEmail }) {
   const building = {
     id: uuidv4(),
     reporterName,
     address,
+    settlementId: settlementId || null,
     damageType,
     description,
     hasDamageImages,
