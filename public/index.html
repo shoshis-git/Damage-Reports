@@ -14,6 +14,8 @@
 
     <nav class="nav-tabs">
       <button class="tab-btn active" data-tab="reports-list">Reports List</button>
+      <button class="tab-btn" data-tab="assessor-portal">פורטל שמאים</button>
+      <button class="tab-btn" data-tab="local-authority-portal">פורטל רשויות מקומיות</button>
       <button class="tab-btn" data-tab="create-report">Create Report</button>
       <button class="tab-btn" data-tab="message-center">מרכז הודעות</button>
     </nav>
@@ -32,9 +34,28 @@
       <div id="bulk-message" class="bulk-message"></div>
       <div id="activity-message" class="activity-message"></div>
       <div id="package-link-container" class="package-link-container"></div>
+      <div id="settlement-summary" class="settlement-summary" hidden></div>
       <div id="reports-container" class="reports-grid">
         <p>Loading reports...</p>
       </div>
+    </div>
+
+    <!-- Assessor Portal Tab -->
+    <div id="assessor-portal" class="tab-content">
+      <h2>פורטל שמאים</h2>
+      <p class="portal-intro">בחר מבנה מהמערכת והזן עבורו הערכת נזק מקצועית.</p>
+      <div id="assessor-portal-message" class="assessor-message"></div>
+      <div id="assessor-portal-list" class="assessor-portal-grid"></div>
+      <div id="assessor-portal-form" class="assessor-form-panel"></div>
+    </div>
+
+    <!-- Local Authority Portal Tab -->
+    <div id="local-authority-portal" class="tab-content">
+      <h2>פורטל רשויות מקומיות</h2>
+      <p class="portal-intro">בחר מבנה מהמערכת ועדכן את מצב התשתיות והסביבה לפני אישור החזרה למגורים.</p>
+      <div id="local-authority-portal-message" class="assessor-message"></div>
+      <div id="local-authority-portal-list" class="assessor-portal-grid"></div>
+      <div id="local-authority-portal-form" class="assessor-form-panel"></div>
     </div>
 
     <!-- Create Report Tab -->
@@ -130,6 +151,14 @@
           <button onclick="updateStatus()" class="save-btn">Save Status</button>
         </div>
         <button onclick="closeDetailsModal()" class="close-btn">Close</button>
+      </div>
+    </div>
+
+    <div id="assessor-modal" class="modal">
+      <div class="modal-content assessor-modal-content">
+        <span class="close" onclick="closeAssessorModal()">&times;</span>
+        <h2>הערכת שמאי</h2>
+        <div id="assessor-modal-content"></div>
       </div>
     </div>
 
